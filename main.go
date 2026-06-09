@@ -1,0 +1,59 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/rubybear-lgtm/vault-request/cmd"
+)
+
+const usage = `vault — one-time secret request link
+
+Usage:
+  vault request <secret-name> [flags]
+
+Commands:
+  request   Generate a one-time link to collect a secret from the user
+
+Global Flags:
+  -out <path>        Output .env file path (default: .env)
+  -note <text>       Human-readable description shown on the form
+  -port <num>        Port to bind (default: random)
+  -ttl <minutes>     Minutes until link expires (default: 30)
+  -listen-addr <ip>  Address to listen on (default: 127.0.0.1)
+  -json              Output as JSON for agent parsing
+
+Examples:
+  vault request GEMINI_API_KEY --note "Google AI Studio API key"
+  vault request WEBHOOK_SECRET --out config/secrets.env --json
+  vault request DATABASE_URL --port 9999 --ttl 15
+`
+
+func main() {
+	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
+		fmt.Print(usage)
+		return
+	}
+
+	switch os.Args[1] {
+	case "request":
+		if err := cmd.RunRequest(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(1)
+		}
+	default:
+		// Support directly invoking as "vault <name>" without "request" subcommand.
+		if !strings.HasPrefix(os.Args[1], "-") {
+			// Treat bare name as "request <name>"
+			if err := cmd.RunRequest(os.Args[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
+			fmt.Print(usage)
+			os.Exit(1)
+		}
+	}
+}
