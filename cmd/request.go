@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -15,6 +13,7 @@ import (
 	"github.com/rubybear-lgtm/vault-request/store"
 	"github.com/rubybear-lgtm/vault-request/token"
 	"github.com/rubybear-lgtm/vault-request/tunnel"
+	"golang.org/x/crypto/nacl/secretbox"
 )
 
 // RequestConfig holds parsed CLI flags for the "request" command.
@@ -152,22 +151,18 @@ func RunRequest(args []string) error {
 	return nil
 }
 
+// decryptBlob decrypts a nacl/secretbox payload (nonce[24] || mac+ciphertext).
 func decryptBlob(key, blob []byte) (string, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	if len(blob) < gcm.NonceSize()+1 {
+	if len(blob) < 24+secretbox.Overhead {
 		return "", fmt.Errorf("blob too short (%d bytes)", len(blob))
 	}
-	iv, ct := blob[:gcm.NonceSize()], blob[gcm.NonceSize():]
-	plain, err := gcm.Open(nil, iv, ct, nil)
-	if err != nil {
-		return "", fmt.Errorf("decryption failed (tampered payload?): %w", err)
+	var nonce [24]byte
+	copy(nonce[:], blob[:24])
+	var k [32]byte
+	copy(k[:], key)
+	plain, ok := secretbox.Open(nil, blob[24:], &nonce, &k)
+	if !ok {
+		return "", fmt.Errorf("decryption failed (tampered payload?)")
 	}
 	return string(plain), nil
 }

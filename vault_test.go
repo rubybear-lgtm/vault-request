@@ -2,8 +2,6 @@ package main
 
 import (
 	crand "crypto/rand"
-	"crypto/aes"
-	"crypto/cipher"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -21,41 +19,36 @@ import (
 	"github.com/rubybear-lgtm/vault-request/store"
 	"github.com/rubybear-lgtm/vault-request/token"
 	"github.com/rubybear-lgtm/vault-request/tunnel"
+	"golang.org/x/crypto/nacl/secretbox"
 )
 
 func encryptBlob(t *testing.T, keyHex, plaintext string) string {
 	t.Helper()
-	key, err := hex.DecodeString(keyHex)
-	if err != nil {
-		t.Fatalf("hex decode key: %v", err)
+	key, _ := hex.DecodeString(keyHex)
+	var k [32]byte
+	copy(k[:], key)
+	var nonce [24]byte
+	if _, err := io.ReadFull(crand.Reader, nonce[:]); err != nil {
+		t.Fatalf("read nonce: %v", err)
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatalf("new cipher: %v", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatalf("new gcm: %v", err)
-	}
-	iv := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(crand.Reader, iv); err != nil {
-		t.Fatalf("read iv: %v", err)
-	}
-	ct := gcm.Seal(nil, iv, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(append(iv, ct...))
+	box := secretbox.Seal(nil, []byte(plaintext), &nonce, &k)
+	payload := append(nonce[:], box...)
+	return base64.StdEncoding.EncodeToString(payload)
 }
 
 func decryptBlob(t *testing.T, keyHex string, blob []byte) string {
 	t.Helper()
 	key, _ := hex.DecodeString(keyHex)
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
-	if len(blob) < gcm.NonceSize()+1 {
+	var k [32]byte
+	copy(k[:], key)
+	if len(blob) < 24 {
 		t.Fatalf("blob too short: %d bytes", len(blob))
 	}
-	plain, err := gcm.Open(nil, blob[:gcm.NonceSize()], blob[gcm.NonceSize():], nil)
-	if err != nil {
-		t.Fatalf("decrypt: %v", err)
+	var nonce [24]byte
+	copy(nonce[:], blob[:24])
+	plain, ok := secretbox.Open(nil, blob[24:], &nonce, &k)
+	if !ok {
+		t.Fatal("decrypt failed")
 	}
 	return string(plain)
 }
