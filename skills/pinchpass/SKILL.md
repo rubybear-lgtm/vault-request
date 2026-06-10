@@ -1,10 +1,9 @@
 ---
 name: pinchpass
 description: Generate one-time E2E-encrypted secret request links via pinchpass. Use when an agent needs to collect API keys, tokens, passwords, connection strings, or any sensitive value from the user. Trigger on keywords: API key, secret, token, credentials, password, .env.
-metadata:
-  openclaw:
-    requires:
-      bins: ["pinchpass"]
+version: 1.0.0
+homepage: https://github.com/rubybear-lgtm/PinchPass
+metadata: { "openclaw": { "requires": { "bins": ["pinchpass"] } } }
 ---
 
 # pinchpass
