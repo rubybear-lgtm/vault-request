@@ -1,6 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool";
-import { execSync } from "child_process";
-export default async () => {
+export default async ({ $ }) => {
     return {
         tool: {
             request_secret: tool({
@@ -27,23 +26,23 @@ export default async () => {
                         .describe("Minutes until the link expires (default: 30)"),
                 },
                 async execute(args) {
-                    const cmd = ["pinchpass", "request", ...args.names, "-json"];
+                    const pieces = ["pinchpass", "request", ...args.names, "-json"];
                     if (args.tunnel)
-                        cmd.push("-tunnel");
+                        pieces.push("-tunnel");
                     if (args.note)
-                        cmd.push("-note", args.note);
+                        pieces.push("-note", args.note);
                     if (args.ttl)
-                        cmd.push("-ttl", String(args.ttl));
+                        pieces.push("-ttl", String(args.ttl));
                     try {
-                        const stdout = execSync(cmd.join(" "), {
-                            encoding: "utf-8",
-                            timeout: (args.ttl ?? 30) * 60 * 1000,
-                        });
-                        return stdout;
+                        const result = await $.raw(pieces);
+                        return result.stdout || result.text || String(result);
                     }
                     catch (err) {
                         const msg = err instanceof Error ? err.message : String(err);
-                        return `Failed to generate secret request: ${msg}`;
+                        const stderr = err && typeof err === "object" && "stderr" in err
+                            ? err.stderr
+                            : "";
+                        return `Failed: ${msg}${stderr ? "\n" + stderr : ""}`;
                     }
                 },
             }),
