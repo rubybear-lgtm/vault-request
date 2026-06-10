@@ -1,9 +1,16 @@
 package main
 
 import (
+	crand "crypto/rand"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,17 +19,51 @@ import (
 
 	"github.com/rubybear-lgtm/vault-request/server"
 	"github.com/rubybear-lgtm/vault-request/store"
+	"github.com/rubybear-lgtm/vault-request/token"
+	"github.com/rubybear-lgtm/vault-request/tunnel"
 )
+
+func encryptBlob(t *testing.T, keyHex, plaintext string) string {
+	t.Helper()
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		t.Fatalf("hex decode key: %v", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("new gcm: %v", err)
+	}
+	iv := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(crand.Reader, iv); err != nil {
+		t.Fatalf("read iv: %v", err)
+	}
+	ct := gcm.Seal(nil, iv, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(append(iv, ct...))
+}
+
+func decryptBlob(t *testing.T, keyHex string, blob []byte) string {
+	t.Helper()
+	key, _ := hex.DecodeString(keyHex)
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	if len(blob) < gcm.NonceSize()+1 {
+		t.Fatalf("blob too short: %d bytes", len(blob))
+	}
+	plain, err := gcm.Open(nil, blob[:gcm.NonceSize()], blob[gcm.NonceSize():], nil)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	return string(plain)
+}
 
 func TestEndToEndClaimFlow(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
-	s, err := store.NewEnvStore(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	srv, err := server.Start(server.Config{
-		Store:      s,
 		SecretName: "TEST_KEY",
 		Note:       "integration test key",
 		TTL:        2 * time.Minute,
@@ -33,17 +74,20 @@ func TestEndToEndClaimFlow(t *testing.T) {
 	}
 	defer srv.Stop()
 
-	url := srv.URL()
-	t.Logf("Server URL: %s", url)
+	srvURL := srv.URL()
+	if !strings.Contains(srvURL, "/claim/") {
+		t.Fatalf("expected /claim/ in URL, got %s", srvURL)
+	}
 
-	if !strings.Contains(url, "/claim/") {
-		t.Fatalf("expected /claim/ in URL, got %s", url)
+	keyHex, err := token.Generate()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// 1. GET form page
-	resp, err := client.Get(url)
+	// GET form.
+	resp, err := client.Get(srvURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,106 +99,120 @@ func TestEndToEndClaimFlow(t *testing.T) {
 	if !strings.Contains(body, "TEST_KEY") {
 		t.Fatal("form does not contain secret name")
 	}
-	if !strings.Contains(body, "htmx.org") {
-		t.Fatal("form does not include htmx")
-	}
-	t.Log("✓ GET form returns 200 with htmx")
+	t.Log("✓ GET form returns 200 with secret name")
 
-	// 2. POST empty → 400
-	resp, err = client.Post(url, "application/x-www-form-urlencoded", strings.NewReader("value="))
+	// POST empty → 400.
+	resp, err = client.Post(srvURL, "application/x-www-form-urlencoded", strings.NewReader("value="))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("POST empty: expected 400, got %d", resp.StatusCode)
 	}
-	t.Log("✓ POST empty value returns 400")
+	resp.Body.Close()
+	t.Log("✓ POST empty returns 400")
 
-	// 3. POST valid → 200
-	resp, err = client.Post(url, "application/x-www-form-urlencoded", strings.NewReader("value=sk-test-abc"))
+	// POST encrypted blob → 200.
+	blob := encryptBlob(t, keyHex, "sk-test-abc")
+	form := neturl.Values{"value": {blob}}
+	resp, err = client.Post(srvURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST valid: expected 200, got %d", resp.StatusCode)
 	}
-	successBody := readAll(t, resp)
-	resp.Body.Close()
-	if !strings.Contains(successBody, "saved") {
+	if !strings.Contains(readAll(t, resp), "saved") {
 		t.Fatal("success response missing 'saved'")
 	}
-	t.Log("✓ POST valid value returns 200 with success")
+	resp.Body.Close()
+	t.Log("✓ POST encrypted blob returns 200")
 
-	// 4. Wait for completion
-	if !srv.Wait() {
+	// Wait returns (true, blob).
+	ok, encBlob := srv.Wait()
+	if !ok {
 		t.Fatal("expected Wait to return true")
 	}
-	t.Log("✓ Wait reports claimed")
+	t.Log("✓ Wait reports submitted")
 
-	// 5. Verify env file
+	// Decrypt and verify round-trip.
+	plaintext := decryptBlob(t, keyHex, encBlob)
+	if plaintext != "sk-test-abc" {
+		t.Fatalf("decrypted value mismatch: got %q", plaintext)
+	}
+	t.Log("✓ Decrypted value matches original")
+
+	// Write to .env and verify.
+	s, err := store.NewEnvStore(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save("TEST_KEY", plaintext); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := string(data)
-	if !strings.Contains(content, `TEST_KEY="sk-test-abc"`) {
-		t.Fatalf("env file missing expected value. Got:\n%s", content)
+	if !strings.Contains(string(data), `TEST_KEY="sk-test-abc"`) {
+		t.Fatalf(".env missing expected value:\n%s", data)
 	}
-	t.Log("✓ .env file contains correct value")
+	t.Log("✓ .env contains correct value")
 }
 
 func TestBadTokenReturns404(t *testing.T) {
-	envPath := filepath.Join(t.TempDir(), ".env")
-	s, _ := store.NewEnvStore(envPath)
-	srv, _ := server.Start(server.Config{
-		Store:      s,
+	srv, err := server.Start(server.Config{
 		SecretName: "BAD_TOKEN_TEST",
 		TTL:        2 * time.Minute,
 		Port:       0,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer srv.Stop()
 
 	badURL := fmt.Sprintf("http://127.0.0.1:%d/claim/invalidtoken123", srv.Port())
 	client := &http.Client{Timeout: 3 * time.Second}
 
-	// GET with bad token
 	resp, err := client.Get(badURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("expected 404 for GET bad token, got %d", resp.StatusCode)
+		t.Fatalf("GET bad token: expected 404, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 
-	// POST with bad token
 	resp, err = client.Post(badURL, "application/x-www-form-urlencoded", strings.NewReader("value=test"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("expected 404 for POST bad token, got %d", resp.StatusCode)
+		t.Fatalf("POST bad token: expected 404, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	t.Log("✓ Bad token returns 404 for GET and POST")
+	t.Log("✓ Bad token returns 404")
 }
 
 func TestTokenReuseBlocked(t *testing.T) {
-	envPath := filepath.Join(t.TempDir(), ".env")
-	s, _ := store.NewEnvStore(envPath)
-	srv, _ := server.Start(server.Config{
-		Store:      s,
+	srv, err := server.Start(server.Config{
 		SecretName: "REUSE_TEST",
 		TTL:        2 * time.Minute,
 		Port:       0,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer srv.Stop()
 
-	url := srv.URL()
+	srvURL := srv.URL()
 	client := &http.Client{Timeout: 3 * time.Second}
+	keyHex, _ := token.Generate()
 
-	// First claim
-	resp, err := client.Post(url, "application/x-www-form-urlencoded", strings.NewReader("value=first"))
+	// First claim.
+	blob := encryptBlob(t, keyHex, "first")
+	form := neturl.Values{"value": {blob}}
+	resp, err := client.Post(srvURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +222,8 @@ func TestTokenReuseBlocked(t *testing.T) {
 	resp.Body.Close()
 	srv.Wait()
 
-	// Second attempt should 404 (token already claimed)
-	resp, err = client.Post(url, "application/x-www-form-urlencoded", strings.NewReader("value=second"))
+	// Second attempt → 404.
+	resp, err = client.Post(srvURL, "application/x-www-form-urlencoded", strings.NewReader("value=second"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +232,35 @@ func TestTokenReuseBlocked(t *testing.T) {
 	}
 	resp.Body.Close()
 	t.Log("✓ Token reuse returns 404")
+}
+
+func TestBoreTunnelSmoke(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	localPort := ln.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.Copy(conn, conn)
+	}()
+
+	tun, err := tunnel.Start(localPort)
+	if err != nil {
+		t.Skipf("bore.pub unreachable, skipping: %v", err)
+	}
+	defer tun.Stop()
+
+	if tun.RemotePort() == 0 {
+		t.Fatal("expected non-zero remote port from bore.pub")
+	}
+	t.Logf("✓ bore.pub assigned port %d", tun.RemotePort())
 }
 
 func readAll(t *testing.T, resp *http.Response) string {

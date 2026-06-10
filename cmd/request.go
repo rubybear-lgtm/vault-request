@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/rubybear-lgtm/vault-request/server"
 	"github.com/rubybear-lgtm/vault-request/store"
+	"github.com/rubybear-lgtm/vault-request/token"
+	"github.com/rubybear-lgtm/vault-request/tunnel"
 )
 
 // RequestConfig holds parsed CLI flags for the "request" command.
@@ -21,6 +26,7 @@ type RequestConfig struct {
 	ListenAddr string
 	OutFile    string
 	JSONOutput bool
+	Tunnel     bool
 }
 
 // RequestOutput is the JSON-serializable result printed after completion.
@@ -44,8 +50,14 @@ func RunRequest(args []string) error {
 		return fmt.Errorf("store: %w", err)
 	}
 
+	// The encryption key lives only in the URL fragment — never sent to server or relay.
+	encKeyHex, err := token.Generate()
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+	keyBytes, _ := hex.DecodeString(encKeyHex)
+
 	srv, err := server.Start(server.Config{
-		Store:      s,
 		SecretName: cfg.SecretName,
 		Note:       cfg.Note,
 		TTL:        time.Duration(cfg.TTLMinutes) * time.Minute,
@@ -56,9 +68,17 @@ func RunRequest(args []string) error {
 		return fmt.Errorf("start server: %w", err)
 	}
 
-	url := srv.URL()
+	url := fmt.Sprintf("http://127.0.0.1:%d/claim/%s#k=%s", srv.Port(), srv.Token(), encKeyHex)
 
-	// Print the link prominently.
+	if cfg.Tunnel {
+		tun, err := tunnel.Start(srv.Port())
+		if err != nil {
+			return fmt.Errorf("bore tunnel: %w", err)
+		}
+		defer tun.Stop()
+		url = fmt.Sprintf("http://bore.pub:%d/claim/%s#k=%s", tun.RemotePort(), srv.Token(), encKeyHex)
+	}
+
 	if cfg.JSONOutput {
 		out := RequestOutput{
 			Success: true,
@@ -71,8 +91,12 @@ func RunRequest(args []string) error {
 		enc.SetIndent("", "  ")
 		enc.Encode(out)
 	} else {
+		tunnelNote := ""
+		if cfg.Tunnel {
+			tunnelNote = " via bore.pub"
+		}
 		fmt.Println()
-		fmt.Println("  🔗  Secret request link (one-time claim)")
+		fmt.Printf("  🔗  Secret request link (one-time, E2E encrypted%s)\n", tunnelNote)
 		fmt.Println()
 		fmt.Printf("     %s\n", url)
 		fmt.Println()
@@ -82,21 +106,29 @@ func RunRequest(args []string) error {
 		}
 		fmt.Printf("     Expiry: %d minutes\n", cfg.TTLMinutes)
 		fmt.Println()
-		fmt.Println("     Share this link with the user to fill in the value.")
 		fmt.Println("     Waiting for user to submit...")
 		fmt.Println()
 	}
 
-	// Block until claimed or timeout.
-	success := srv.Wait()
+	ok, encBlob := srv.Wait()
+
+	if ok {
+		plain, err := decryptBlob(keyBytes, encBlob)
+		if err != nil {
+			return fmt.Errorf("decrypt: %w", err)
+		}
+		if err := s.Save(cfg.SecretName, plain); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+	}
 
 	if cfg.JSONOutput {
 		out := RequestOutput{
-			Success: success,
+			Success: ok,
 			Name:    cfg.SecretName,
 			Port:    srv.Port(),
 		}
-		if success {
+		if ok {
 			out.Message = fmt.Sprintf("Secret '%s' provisioned successfully.", cfg.SecretName)
 		} else {
 			out.Message = "Request timed out or failed."
@@ -105,7 +137,7 @@ func RunRequest(args []string) error {
 		enc.SetIndent("", "  ")
 		enc.Encode(out)
 	} else {
-		if success {
+		if ok {
 			fmt.Println()
 			fmt.Printf("  ✅  Secret '%s' saved to %s\n", cfg.SecretName, cfg.OutFile)
 			fmt.Println()
@@ -120,16 +152,33 @@ func RunRequest(args []string) error {
 	return nil
 }
 
+func decryptBlob(key, blob []byte) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	if len(blob) < gcm.NonceSize()+1 {
+		return "", fmt.Errorf("blob too short (%d bytes)", len(blob))
+	}
+	iv, ct := blob[:gcm.NonceSize()], blob[gcm.NonceSize():]
+	plain, err := gcm.Open(nil, iv, ct, nil)
+	if err != nil {
+		return "", fmt.Errorf("decryption failed (tampered payload?): %w", err)
+	}
+	return string(plain), nil
+}
+
 func parseRequestFlags(args []string) (*RequestConfig, error) {
-	// Scan args to find the first non-flag argument (the secret name).
-	// We extract it so flags can appear before or after the name.
 	var secretName string
 	var flagArgs []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			flagArgs = append(flagArgs, arg)
-			// If this flag takes a value and the next arg isn't a flag, include it.
 			if isValueFlag(arg) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				flagArgs = append(flagArgs, args[i])
@@ -142,29 +191,25 @@ func parseRequestFlags(args []string) (*RequestConfig, error) {
 	}
 
 	fs := flag.NewFlagSet("request", flag.ContinueOnError)
-
 	cfg := &RequestConfig{}
-
 	fs.StringVar(&cfg.Note, "note", "", "Human-readable description shown on the form")
 	fs.IntVar(&cfg.Port, "port", 0, "Port to bind (default: random available)")
 	fs.IntVar(&cfg.TTLMinutes, "ttl", 30, "Minutes until the link expires")
 	fs.StringVar(&cfg.ListenAddr, "listen-addr", "127.0.0.1", "Address to listen on")
 	fs.StringVar(&cfg.OutFile, "out", ".env", "Output .env file path")
 	fs.BoolVar(&cfg.JSONOutput, "json", false, "Output as JSON for agent parsing")
+	fs.BoolVar(&cfg.Tunnel, "tunnel", false, "Open a bore.pub tunnel and print the public URL")
 
 	if err := fs.Parse(flagArgs); err != nil {
 		return nil, err
 	}
-
 	if secretName == "" {
 		return nil, fmt.Errorf("usage: vault request <secret-name> [flags]\n\nRun 'vault --help' for available flags.")
 	}
-
 	cfg.SecretName = secretName
 	return cfg, nil
 }
 
-// isValueFlag returns true if the flag name takes a value argument.
 func isValueFlag(arg string) bool {
 	name := strings.TrimLeft(arg, "-")
 	switch name {
