@@ -1,0 +1,30 @@
+{
+  "name": "@rubybear-lgtm/pinchpass",
+  "version": "1.0.0",
+  "description": "One-time E2E-encrypted secret request links for OpenClaw agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "SKILL.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.16.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

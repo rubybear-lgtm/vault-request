@@ -19,6 +19,12 @@ go test -v -count=1 ./...    # run tests (count=1 disables cache)
 - `pinchpass --help` or bare `pinchpass` prints usage. No `--help` on subcommand.
 - Default output: `.env`. Default TTL: 30 min. Default listen: `127.0.0.1:random`.
 - `-json` flag prints machine-readable JSON (for agent parsing). Human mode prints link and blocks.
+- **Blocking**: `pinchpass` blocks until the user submits the secret or the TTL expires.
+
+## OpenClaw plugin
+
+A plugin at `.opencode/plugins/pinchpass/plugin.js` registers a `request_secret`
+tool. To install globally: `openclaw plugins install @rubybear-lgtm/pinchpass`.
 
 ## Architecture
 

@@ -26,6 +26,7 @@ type RequestConfig struct {
 	OutFile     string
 	JSONOutput  bool
 	Tunnel      bool
+	GenOnly     bool
 }
 
 // RequestOutput is the JSON-serializable result printed after completion.
@@ -49,7 +50,6 @@ func RunRequest(args []string) error {
 		return fmt.Errorf("store: %w", err)
 	}
 
-	// The encryption key lives only in the URL fragment — never sent to server or relay.
 	encKeyStr, err := token.Generate()
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)

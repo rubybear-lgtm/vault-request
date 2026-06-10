@@ -94,15 +94,21 @@ Requires Go 1.25+.
 ## Project structure
 
 ```
-├── main.go              # Entry point
-├── cmd/request.go       # CLI subcommand + nacl decryption
+├── main.go                    # Entry point
+├── cmd/request.go             # CLI subcommand + nacl decryption
 ├── server/
-│   ├── server.go        # HTTP server lifecycle
-│   └── handlers.go      # Form (TweetNaCl embedded) + handlers
-├── tunnel/bore.go       # Native bore.pub client (pure stdlib)
-├── token/token.go       # One-time token generation
-├── store/store.go       # .env writer
-└── pinchpass_test.go    # Integration tests
+│   ├── server.go              # HTTP server lifecycle
+│   └── handlers.go            # Form (TweetNaCl embedded) + handlers
+├── tunnel/bore.go             # Native bore.pub client (pure stdlib)
+├── token/token.go             # One-time token generation
+├── store/store.go             # .env writer
+├── pinchpass_test.go          # Integration tests
+├── plugins/pinchpass/         # OpenClaw plugin package
+│   ├── package.json
+│   ├── openclaw.plugin.json
+│   ├── SKILL.md
+│   └── src/index.ts
+└── .opencode/plugins/         # Auto-discovered local plugin
 ```
 
 ## Tests
@@ -113,32 +119,39 @@ go test -v -count=1 ./...
 
 The bore tunnel smoke test (`TestBoreTunnelSmoke`) is skipped automatically if bore.pub is unreachable.
 
-## OpenClaw skill
+## OpenClaw plugin
 
-This repo includes an OpenClaw skill at `skills/pinchpass/SKILL.md` that
-teaches agents to use `pinchpass` to securely collect secrets from users.
+This repo includes an OpenClaw plugin that registers a `request_secret` tool
+for collecting secrets from users. It also bundles a skill that teaches agents
+how to use `pinchpass` directly.
 
-### Install from ClawHub
+### Local install (auto-discovered)
+
+The plugin at `.opencode/plugins/pinchpass/plugin.js` is auto-discovered when
+OpenClaw runs in this repo. No config needed.
+
+### Install from npm
 
 ```bash
-openclaw skills install pinchpass
+openclaw plugins install @rubybear-lgtm/pinchpass
 ```
 
 ### Manual install
 
 ```bash
-cp -r skills/pinchpass ~/.config/opencode/skills/
+cd plugins/pinchpass
+npm install && npm run build
+# Copy the skill to your skills directory
+cp SKILL.md ~/.openclaw/workspace/skills/pinchpass/
 ```
 
-### Publish
+### Publish to npm
 
 ```bash
-clawhub login
-clawhub sync --dry-run --owner rubybear-lgtm
-clawhub sync --all --owner rubybear-lgtm
+cd plugins/pinchpass
+npm run build
+npm publish
 ```
-
-Or use the GitHub Actions workflow at `.github/workflows/publish-skill.yml`.
 
 ## License
 
