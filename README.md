@@ -1,4 +1,4 @@
-# vault-request
+# pinchpass
 
 One-time secret request links for OpenClaw agents. Generates a temporary HTTP server with a single-use encrypted form for collecting sensitive values — works both locally and over the internet via a built-in bore.pub tunnel.
 
@@ -7,7 +7,7 @@ One-time secret request links for OpenClaw agents. Generates a temporary HTTP se
 ## How it works
 
 ```
-Agent runs:   vault request GEMINI_API_KEY --tunnel --note "Google AI Studio key"
+Agent runs:   pinchpass request GEMINI_API_KEY --tunnel --note "Google AI Studio key"
               → http://bore.pub:38448/claim/abc123…#k=a1b2c3…
 
 User opens    → form with embedded TweetNaCl.js crypto (no WebCrypto required)
@@ -26,19 +26,19 @@ The link is:
 
 ```bash
 # Local link (LAN only)
-vault request GEMINI_API_KEY
+pinchpass request GEMINI_API_KEY
 
 # Public link via bore.pub tunnel
-vault request GEMINI_API_KEY --tunnel
+pinchpass request GEMINI_API_KEY --tunnel
 
 # With note and custom output file
-vault request GEMINI_API_KEY --note "Google AI Studio key" --out config/secrets.env
+pinchpass request GEMINI_API_KEY --note "Google AI Studio key" --out config/secrets.env
 
 # JSON output for agent parsing
-vault request GEMINI_API_KEY --json
+pinchpass request GEMINI_API_KEY --json
 
 # Custom TTL (minutes)
-vault request GEMINI_API_KEY --ttl 5
+pinchpass request GEMINI_API_KEY --ttl 5
 ```
 
 ## Flags
@@ -86,7 +86,7 @@ Browser                        Server (local)        Bore relay
 ## Build
 
 ```bash
-go build -o vault .
+go build -o pinchpass .
 ```
 
 Requires Go 1.25+.
@@ -102,7 +102,7 @@ Requires Go 1.25+.
 ├── tunnel/bore.go       # Native bore.pub client (pure stdlib)
 ├── token/token.go       # One-time token generation
 ├── store/store.go       # .env writer
-└── vault_test.go        # Integration tests
+└── pinchpass_test.go    # Integration tests
 ```
 
 ## Tests
@@ -112,6 +112,33 @@ go test -v -count=1 ./...
 ```
 
 The bore tunnel smoke test (`TestBoreTunnelSmoke`) is skipped automatically if bore.pub is unreachable.
+
+## OpenClaw skill
+
+This repo includes an OpenClaw skill at `skills/pinchpass/SKILL.md` that
+teaches agents to use `pinchpass` to securely collect secrets from users.
+
+### Install from ClawHub
+
+```bash
+openclaw skills install pinchpass
+```
+
+### Manual install
+
+```bash
+cp -r skills/pinchpass ~/.config/opencode/skills/
+```
+
+### Publish
+
+```bash
+clawhub login
+clawhub sync --dry-run --owner rubybear-lgtm
+clawhub sync --all --owner rubybear-lgtm
+```
+
+Or use the GitHub Actions workflow at `.github/workflows/publish-skill.yml`.
 
 ## License
 

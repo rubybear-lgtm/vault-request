@@ -1,4 +1,4 @@
-module github.com/rubybear-lgtm/vault-request
+module github.com/rubybear-lgtm/pinchpass
 
 go 1.25.0
 

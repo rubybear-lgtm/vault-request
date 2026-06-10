@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rubybear-lgtm/vault-request/server"
-	"github.com/rubybear-lgtm/vault-request/store"
-	"github.com/rubybear-lgtm/vault-request/token"
-	"github.com/rubybear-lgtm/vault-request/tunnel"
+	"github.com/rubybear-lgtm/pinchpass/server"
+	"github.com/rubybear-lgtm/pinchpass/store"
+	"github.com/rubybear-lgtm/pinchpass/token"
+	"github.com/rubybear-lgtm/pinchpass/tunnel"
 	"golang.org/x/crypto/nacl/secretbox"
 )
 

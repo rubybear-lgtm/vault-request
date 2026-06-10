@@ -31,7 +31,7 @@ const pageTemplate = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vault — {{.NamesText}}</title>
+<title>pinchpass — {{.NamesText}}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{
@@ -107,7 +107,7 @@ const pageTemplate = `<!DOCTYPE html>
   &#x255A;&#x2550;&#x2550;&#x2550;&#x255D;  &#x255A;&#x2550;&#x255D;  &#x255A;&#x2550;&#x255D; &#x255A;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x255D; &#x255A;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x255D;&#x255A;&#x2550;&#x255D; 
 </pre>
 <div class="card">
-  <span class="badge">vault request</span>
+  <span class="badge">pinchpass request</span>
   <h1>{{.NamesText}}</h1>
   {{if .Note}}<p class="note">{{.Note}}</p>{{end}}
   <div id="key-error" class="key-error" style="display:none"></div>
@@ -123,7 +123,7 @@ const pageTemplate = `<!DOCTYPE html>
 </div>
 <script>` + naclJS + `</script>
 <script>
-var vaultKey=null;
+var ppKey=null;
 (function init(){
   var m=location.hash.match(/^#k=([A-Za-z0-9_-]{43})$/);
   if(!m){
@@ -136,11 +136,11 @@ var vaultKey=null;
   var b64=m[1].replace(/-/g,'+').replace(/_/g,'/');
   while(b64.length%4) b64+='=';
   var raw=atob(b64);
-  vaultKey=new Uint8Array(raw.length);
-  for(var i=0;i<raw.length;i++) vaultKey[i]=raw.charCodeAt(i);
+  ppKey=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) ppKey[i]=raw.charCodeAt(i);
 })();
 function submitSecret(){
-  if(!vaultKey)return;
+  if(!ppKey)return;
   var names={{.NamesJSON}},data={},i,el,val;
   for(i=0;i<names.length;i++){
     el=document.getElementById('v_'+i);
@@ -150,7 +150,7 @@ function submitSecret(){
   }
   var msg=new TextEncoder().encode(JSON.stringify(data));
   var nonce=nacl.randomBytes(nacl.secretbox.nonceLength);
-  var box=nacl.secretbox(msg,nonce,vaultKey);
+  var box=nacl.secretbox(msg,nonce,ppKey);
   var payload=new Uint8Array(nonce.length+box.length);
   payload.set(nonce);payload.set(box,nonce.length);
   var bin='';payload.forEach(function(b){bin+=String.fromCharCode(b);});

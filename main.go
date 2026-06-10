@@ -5,13 +5,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rubybear-lgtm/vault-request/cmd"
+	"github.com/rubybear-lgtm/pinchpass/cmd"
 )
 
-const usage = `vault — one-time secret request link
+const usage = `pinchpass — one-time secret request link
 
 Usage:
-  vault request <secret-name>... [flags]
+  pinchpass request <secret-name>... [flags]
 
 Commands:
   request   Generate a one-time link to collect one or more secrets from the user
@@ -26,10 +26,10 @@ Global Flags:
   -tunnel            Open a bore.pub tunnel for public URL access
 
 Examples:
-  vault request GEMINI_API_KEY -note "Google AI Studio API key"
-  vault request DB_HOST DB_PORT DB_NAME -out .env
-  vault request WEBHOOK_SECRET -out config/secrets.env -json
-  vault request DATABASE_URL -port 9999 -ttl 15
+  pinchpass request GEMINI_API_KEY -note "Google AI Studio API key"
+  pinchpass request DB_HOST DB_PORT DB_NAME -out .env
+  pinchpass request WEBHOOK_SECRET -out config/secrets.env -json
+  pinchpass request DATABASE_URL -port 9999 -ttl 15
 `
 
 func main() {
@@ -45,7 +45,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		// Support directly invoking as "vault <name>" without "request" subcommand.
+		// Support directly invoking as "pinchpass <name>" without "request" subcommand.
 		if !strings.HasPrefix(os.Args[1], "-") {
 			// Treat bare name as "request <name>"
 			if err := cmd.RunRequest(os.Args[1:]); err != nil {

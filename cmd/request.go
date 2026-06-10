@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rubybear-lgtm/vault-request/server"
-	"github.com/rubybear-lgtm/vault-request/store"
-	"github.com/rubybear-lgtm/vault-request/token"
-	"github.com/rubybear-lgtm/vault-request/tunnel"
+	"github.com/rubybear-lgtm/pinchpass/server"
+	"github.com/rubybear-lgtm/pinchpass/store"
+	"github.com/rubybear-lgtm/pinchpass/token"
+	"github.com/rubybear-lgtm/pinchpass/tunnel"
 	"golang.org/x/crypto/nacl/secretbox"
 )
 
@@ -37,7 +37,7 @@ type RequestOutput struct {
 	Port    int      `json:"port"`
 }
 
-// RunRequest executes the "vault request <name>" subcommand.
+// RunRequest executes the "pinchpass request <name>" subcommand.
 func RunRequest(args []string) error {
 	cfg, err := parseRequestFlags(args)
 	if err != nil {
@@ -220,7 +220,7 @@ func parseRequestFlags(args []string) (*RequestConfig, error) {
 		return nil, err
 	}
 	if len(secretNames) == 0 {
-		return nil, fmt.Errorf("usage: vault request <secret-name>... [flags]\n\nRun 'vault --help' for available flags.")
+		return nil, fmt.Errorf("usage: pinchpass request <secret-name>... [flags]\n\nRun 'pinchpass --help' for available flags.")
 	}
 	cfg.SecretNames = secretNames
 	return cfg, nil
