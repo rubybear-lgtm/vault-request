@@ -4,5 +4,9 @@
   "description": "Generate one-time E2E-encrypted secret request links",
   "activation": {
     "onStartup": false
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
   }
 }

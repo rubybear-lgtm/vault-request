@@ -1,6 +1,6 @@
 {
   "name": "@pinchpass/cli",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "One-time E2E-encrypted secret request links for OpenClaw agents",
   "type": "module",
   "main": "./dist/index.js",
