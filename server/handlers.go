@@ -2,18 +2,20 @@ package server
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
-
-	"github.com/rubybear-lgtm/vault-request/token"
 )
 
 // FormData is passed to the HTML template.
 type FormData struct {
-	Name  string
-	Note  string
-	Token string
+	Names     []string
+	NamesJSON template.JS
+	NamesText string
+	Note      string
+	Path      string
 }
 
 type resultData struct {
@@ -29,47 +31,61 @@ const pageTemplate = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>vault — {{.Name}}</title>
+<title>vault — {{.NamesText}}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#fdf6e3;--fg:#657b83;--card:#eee8d5;--border:#93a1a1;
+    --heading:#586e75;--label:#93a1a1;--input-bg:#fdf6e3;--input-fg:#586e75;
+    --badge-bg:#fdf6e3;--badge-fg:#b58900;--err-bg:#fdf6e3;
+    --key-bg:#fdf6e3;--btn-fg:#fdf6e3;
+  }
+  @media(prefers-color-scheme:dark){
+    :root{
+      --bg:#002b36;--fg:#839496;--card:#073642;--border:#586e75;
+      --heading:#93a1a1;--label:#657b83;--input-bg:#073642;--input-fg:#93a1a1;
+      --badge-bg:#073642;--badge-fg:#b58900;--err-bg:#073642;
+      --key-bg:#002b36;--btn-fg:#002b36;
+    }
+  }
   body{
     font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
-    background:#fdf6e3;color:#657b83;
+    background:var(--bg);color:var(--fg);
     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;
   }
   .wrap{max-width:480px;width:100%}
   .ascii-hero{
-    font-size:.52rem;line-height:1.2;white-space:pre;display:block;overflow-x:auto;
-    margin-bottom:1.5rem;
+    font-size:.7rem;line-height:1.15;white-space:pre;display:block;overflow-x:auto;
+    margin-bottom:.75rem;
     background:linear-gradient(90deg,#b58900,#cb4b16,#2aa198,#268bd2);
     -webkit-background-clip:text;-webkit-text-fill-color:transparent;
     background-clip:text;background-size:200% auto;
     animation:drift 8s ease-in-out infinite;
   }
   @keyframes drift{0%{background-position:0% center}50%{background-position:100% center}100%{background-position:0% center}}
-  .card{background:#eee8d5;border:1px solid #93a1a1;border-radius:8px;padding:1.75rem}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:1.75rem}
   .badge{
-    display:inline-block;background:#fdf6e3;border:1px solid #93a1a1;
-    color:#b58900;font-size:.75rem;padding:.2rem .5rem;border-radius:4px;margin-bottom:1rem;
+    display:inline-block;background:var(--badge-bg);border:1px solid var(--border);
+    color:var(--badge-fg);font-size:.75rem;padding:.2rem .5rem;border-radius:4px;margin-bottom:1rem;
   }
-  h1{font-size:1.05rem;color:#586e75;margin-bottom:.35rem}
+  h1{font-size:1.05rem;color:var(--heading);margin-bottom:.35rem}
   h1::after{content:'▋';animation:blink 1s step-end infinite;margin-left:2px;color:#2aa198}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-  .note{font-size:.85rem;color:#93a1a1;margin-bottom:1.25rem}
+  .note{font-size:.85rem;color:var(--label);margin-bottom:1.25rem}
   .key-error{
-    background:#fdf6e3;border:1px solid #dc322f;color:#dc322f;
+    background:var(--err-bg);border:1px solid #dc322f;color:#dc322f;
     padding:.6rem .75rem;border-radius:4px;font-size:.82rem;margin-bottom:1rem;
   }
-  label{display:block;font-size:.8rem;color:#93a1a1;margin-bottom:.4rem}
+  label{display:block;font-size:.8rem;color:var(--label);margin-bottom:.4rem}
   input[type=password]{
-    width:100%;padding:.65rem .75rem;border:1px solid #93a1a1;border-radius:4px;
-    background:#fdf6e3;color:#586e75;font-family:inherit;font-size:.95rem;
+    width:100%;padding:.65rem .75rem;border:1px solid var(--border);border-radius:4px;
+    background:var(--input-bg);color:var(--input-fg);font-family:inherit;font-size:.95rem;
     outline:none;transition:border-color .15s;
   }
   input[type=password]:focus{border-color:#2aa198}
   button{
     margin-top:.9rem;width:100%;padding:.65rem;border:none;border-radius:4px;
-    background:#2aa198;color:#fdf6e3;font-family:inherit;font-size:.95rem;font-weight:600;
+    background:#2aa198;color:var(--btn-fg);font-family:inherit;font-size:.95rem;font-weight:600;
     cursor:pointer;transition:opacity .15s,transform .05s;
   }
   button:hover:not(:disabled){opacity:.88}
@@ -83,21 +99,23 @@ const pageTemplate = `<!DOCTYPE html>
 <body>
 <div class="wrap">
 <pre class="ascii-hero">
-&#x2588;&#x2588;&#x2557;   &#x2588;&#x2588;&#x2557; &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2557;&#x2588;&#x2588;&#x2557;   &#x2588;&#x2588;&#x2557;&#x2588;&#x2588;&#x2557;  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2557;
+&#x2588;&#x2588;&#x2557;   &#x2588;&#x2588;&#x2557; &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2557; &#x2588;&#x2588;&#x2557;   &#x2588;&#x2588;&#x2557;&#x2588;&#x2588;&#x2557;  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2557;
 &#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2554;&#x2550;&#x2550;&#x2588;&#x2588;&#x2557;&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;  &#x255A;&#x2550;&#x2550;&#x2588;&#x2588;&#x2554;&#x2550;&#x2550;&#x255D;
-&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;     &#x2588;&#x2588;&#x2551;
-&#x255A;&#x2588;&#x2588;&#x2557; &#x2588;&#x2588;&#x2554;&#x255D;&#x2588;&#x2588;&#x2554;&#x2550;&#x2550;&#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;     &#x2588;&#x2588;&#x2551;
- &#x255A;&#x2588;&#x2588;&#x2588;&#x2588;&#x2554;&#x255D; &#x2588;&#x2588;&#x2551;  &#x2588;&#x2588;&#x2551;&#x255A;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2554;&#x255D;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2557;&#x2588;&#x2588;&#x2551;
-  &#x255A;&#x2550;&#x2550;&#x2550;&#x255D;  &#x255A;&#x2550;&#x255D;  &#x255A;&#x2550;&#x255D; &#x255A;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x255D; &#x255A;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x255D;&#x255A;&#x2550;&#x255D;
+&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;     &#x2588;&#x2588;&#x2551;   
+&#x255A;&#x2588;&#x2588;&#x2557; &#x2588;&#x2588;&#x2554;&#x255D;&#x2588;&#x2588;&#x2554;&#x2550;&#x2550;&#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;   &#x2588;&#x2588;&#x2551;&#x2588;&#x2588;&#x2551;     &#x2588;&#x2588;&#x2551;   
+ &#x255A;&#x2588;&#x2588;&#x2588;&#x2588;&#x2554;&#x255D; &#x2588;&#x2588;&#x2551;  &#x2588;&#x2588;&#x2551;&#x255A;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2554;&#x255D;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2557;&#x2588;&#x2588;&#x2551;   
+  &#x255A;&#x2550;&#x2550;&#x2550;&#x255D;  &#x255A;&#x2550;&#x255D;  &#x255A;&#x2550;&#x255D; &#x255A;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x255D; &#x255A;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x255D;&#x255A;&#x2550;&#x255D; 
 </pre>
 <div class="card">
   <span class="badge">vault request</span>
-  <h1>{{.Name}}</h1>
+  <h1>{{.NamesText}}</h1>
   {{if .Note}}<p class="note">{{.Note}}</p>{{end}}
   <div id="key-error" class="key-error" style="display:none"></div>
   <div id="form-area">
-    <label for="value">secret value</label>
-    <input type="password" id="value" name="value" autofocus spellcheck="false" autocomplete="off">
+    {{range $i, $name := .Names}}
+    <label for="v_{{$i}}">{{$name}}</label>
+    <input type="password" id="v_{{$i}}"{{if eq $i 0}} autofocus{{end}} spellcheck="false" autocomplete="off">
+    {{end}}
     <button id="submit-btn" type="button" onclick="submitSecret()">submit</button>
   </div>
   <div id="result"></div>
@@ -107,7 +125,7 @@ const pageTemplate = `<!DOCTYPE html>
 <script>
 var vaultKey=null;
 (function init(){
-  var m=location.hash.match(/^#k=([0-9a-f]{64})$/);
+  var m=location.hash.match(/^#k=([A-Za-z0-9_-]{43})$/);
   if(!m){
     var el=document.getElementById('key-error');
     el.textContent='Missing encryption key — re-request this link from the agent.';
@@ -115,13 +133,22 @@ var vaultKey=null;
     document.getElementById('submit-btn').disabled=true;
     return;
   }
-  vaultKey=new Uint8Array(m[1].match(/.{2}/g).map(function(b){return parseInt(b,16);}));
+  var b64=m[1].replace(/-/g,'+').replace(/_/g,'/');
+  while(b64.length%4) b64+='=';
+  var raw=atob(b64);
+  vaultKey=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) vaultKey[i]=raw.charCodeAt(i);
 })();
 function submitSecret(){
-  var val=document.getElementById('value').value.trim();
-  if(!val){showErr('Value cannot be empty.');return;}
   if(!vaultKey)return;
-  var msg=new TextEncoder().encode(val);
+  var names={{.NamesJSON}},data={},i,el,val;
+  for(i=0;i<names.length;i++){
+    el=document.getElementById('v_'+i);
+    val=el.value.trim();
+    if(!val){showErr(names[i]+' cannot be empty.');el.focus();return;}
+    data[names[i]]=val;
+  }
+  var msg=new TextEncoder().encode(JSON.stringify(data));
   var nonce=nacl.randomBytes(nacl.secretbox.nonceLength);
   var box=nacl.secretbox(msg,nonce,vaultKey);
   var payload=new Uint8Array(nonce.length+box.length);
@@ -130,7 +157,7 @@ function submitSecret(){
   var b64=btoa(bin);
   var btn=document.getElementById('submit-btn');
   btn.disabled=true;btn.textContent='submitting...';
-  fetch('/claim/{{.Token}}',{
+  fetch('/claim/{{.Path}}',{
     method:'POST',
     headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:'value='+encodeURIComponent(b64),
@@ -170,43 +197,55 @@ func (s *Server) newRouter() http.Handler {
 }
 
 func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
-	tok := strings.TrimPrefix(r.URL.Path, "/claim/")
-	if tok == "" {
+	path := strings.TrimPrefix(r.URL.Path, "/claim/")
+	if path == "" || path != s.path {
 		http.NotFound(w, r)
 		return
 	}
 
 	s.mu.RLock()
 	submitted := s.submitted
-	valid := token.Validate(tok, s.token)
 	s.mu.RUnlock()
 
-	if !valid || submitted {
+	if submitted {
 		s.renderExpired(w)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		s.renderForm(w, tok)
+		s.renderForm(w)
 	case http.MethodPost:
-		s.handleSubmit(w, r, tok)
+		s.handleSubmit(w, r)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) renderForm(w http.ResponseWriter, tok string) {
+func (s *Server) renderForm(w http.ResponseWriter) {
 	tmpl, err := template.New("page").Parse(pageTemplate)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+
+	namesJSON, _ := json.Marshal(s.secretNames)
+	namesText := s.secretNames[0]
+	if len(s.secretNames) > 1 {
+		namesText = fmt.Sprintf("%d secrets", len(s.secretNames))
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.Execute(w, FormData{Name: s.secretName, Note: s.secretNote, Token: tok})
+	tmpl.Execute(w, FormData{
+		Names:     s.secretNames,
+		NamesJSON: template.JS(namesJSON),
+		NamesText: namesText,
+		Note:      s.secretNote,
+		Path:      s.path,
+	})
 }
 
-func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request, tok string) {
+func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.FormValue("value"))
 	if raw == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -229,8 +268,12 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request, tok string
 	s.setEncryptedBlob(blob)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	successName := s.secretNames[0]
+	if len(s.secretNames) > 1 {
+		successName = fmt.Sprintf("All %d secrets", len(s.secretNames))
+	}
 	t, _ := template.New("s").Parse(successFragment)
-	t.Execute(w, resultData{Success: true, Name: s.secretName})
+	t.Execute(w, resultData{Success: true, Name: successName})
 }
 
 func (s *Server) renderExpired(w http.ResponseWriter) {

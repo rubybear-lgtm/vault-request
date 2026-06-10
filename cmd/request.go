@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,23 +18,23 @@ import (
 
 // RequestConfig holds parsed CLI flags for the "request" command.
 type RequestConfig struct {
-	SecretName string
-	Note       string
-	Port       int
-	TTLMinutes int
-	ListenAddr string
-	OutFile    string
-	JSONOutput bool
-	Tunnel     bool
+	SecretNames []string
+	Note        string
+	Port        int
+	TTLMinutes  int
+	ListenAddr  string
+	OutFile     string
+	JSONOutput  bool
+	Tunnel      bool
 }
 
 // RequestOutput is the JSON-serializable result printed after completion.
 type RequestOutput struct {
-	Success bool   `json:"success"`
-	Name    string `json:"name"`
-	Message string `json:"message"`
-	URL     string `json:"url"`
-	Port    int    `json:"port"`
+	Success bool     `json:"success"`
+	Names   []string `json:"names"`
+	Message string   `json:"message"`
+	URL     string   `json:"url"`
+	Port    int      `json:"port"`
 }
 
 // RunRequest executes the "vault request <name>" subcommand.
@@ -50,24 +50,24 @@ func RunRequest(args []string) error {
 	}
 
 	// The encryption key lives only in the URL fragment — never sent to server or relay.
-	encKeyHex, err := token.Generate()
+	encKeyStr, err := token.Generate()
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)
 	}
-	keyBytes, _ := hex.DecodeString(encKeyHex)
+	keyBytes, _ := base64.RawURLEncoding.DecodeString(encKeyStr)
 
 	srv, err := server.Start(server.Config{
-		SecretName: cfg.SecretName,
-		Note:       cfg.Note,
-		TTL:        time.Duration(cfg.TTLMinutes) * time.Minute,
-		Port:       cfg.Port,
-		ListenAddr: cfg.ListenAddr,
+		SecretNames: cfg.SecretNames,
+		Note:        cfg.Note,
+		TTL:         time.Duration(cfg.TTLMinutes) * time.Minute,
+		Port:        cfg.Port,
+		ListenAddr:  cfg.ListenAddr,
 	})
 	if err != nil {
 		return fmt.Errorf("start server: %w", err)
 	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/claim/%s#k=%s", srv.Port(), srv.Token(), encKeyHex)
+	url := fmt.Sprintf("http://127.0.0.1:%d/claim/%s#k=%s", srv.Port(), srv.Path(), encKeyStr)
 
 	if cfg.Tunnel {
 		tun, err := tunnel.Start(srv.Port())
@@ -75,13 +75,13 @@ func RunRequest(args []string) error {
 			return fmt.Errorf("bore tunnel: %w", err)
 		}
 		defer tun.Stop()
-		url = fmt.Sprintf("http://bore.pub:%d/claim/%s#k=%s", tun.RemotePort(), srv.Token(), encKeyHex)
+		url = fmt.Sprintf("http://bore.pub:%d/claim/%s#k=%s", tun.RemotePort(), srv.Path(), encKeyStr)
 	}
 
 	if cfg.JSONOutput {
 		out := RequestOutput{
 			Success: true,
-			Name:    cfg.SecretName,
+			Names:   cfg.SecretNames,
 			Message: fmt.Sprintf("Secret request link (one-time, expires in %d min)", cfg.TTLMinutes),
 			URL:     url,
 			Port:    srv.Port(),
@@ -99,7 +99,9 @@ func RunRequest(args []string) error {
 		fmt.Println()
 		fmt.Printf("     %s\n", url)
 		fmt.Println()
-		fmt.Printf("     Name:   %s\n", cfg.SecretName)
+		for _, n := range cfg.SecretNames {
+			fmt.Printf("     Name:   %s\n", n)
+		}
 		if cfg.Note != "" {
 			fmt.Printf("     Note:   %s\n", cfg.Note)
 		}
@@ -116,19 +118,19 @@ func RunRequest(args []string) error {
 		if err != nil {
 			return fmt.Errorf("decrypt: %w", err)
 		}
-		if err := s.Save(cfg.SecretName, plain); err != nil {
-			return fmt.Errorf("save: %w", err)
+		if err := saveSecret(s, cfg.SecretNames, plain); err != nil {
+			return err
 		}
 	}
 
 	if cfg.JSONOutput {
 		out := RequestOutput{
 			Success: ok,
-			Name:    cfg.SecretName,
+			Names:   cfg.SecretNames,
 			Port:    srv.Port(),
 		}
 		if ok {
-			out.Message = fmt.Sprintf("Secret '%s' provisioned successfully.", cfg.SecretName)
+			out.Message = "Secrets provisioned successfully."
 		} else {
 			out.Message = "Request timed out or failed."
 		}
@@ -138,7 +140,10 @@ func RunRequest(args []string) error {
 	} else {
 		if ok {
 			fmt.Println()
-			fmt.Printf("  ✅  Secret '%s' saved to %s\n", cfg.SecretName, cfg.OutFile)
+			fmt.Printf("  ✅  Saved to %s\n", cfg.OutFile)
+			for _, n := range cfg.SecretNames {
+				fmt.Printf("       %s\n", n)
+			}
 			fmt.Println()
 		} else {
 			fmt.Println()
@@ -149,6 +154,24 @@ func RunRequest(args []string) error {
 	}
 
 	return nil
+}
+
+// saveSecret decrypts a JSON blob or falls back to a single key, then saves each key-value pair.
+func saveSecret(s store.Store, names []string, plain string) error {
+	var values map[string]string
+	if err := json.Unmarshal([]byte(plain), &values); err == nil {
+		for k, v := range values {
+			if err := s.Save(k, v); err != nil {
+				return fmt.Errorf("save %s: %w", k, err)
+			}
+		}
+		return nil
+	}
+	// Fallback: treat as single value for the first name.
+	if len(names) == 0 {
+		return nil
+	}
+	return s.Save(names[0], plain)
 }
 
 // decryptBlob decrypts a nacl/secretbox payload (nonce[24] || mac+ciphertext).
@@ -168,7 +191,7 @@ func decryptBlob(key, blob []byte) (string, error) {
 }
 
 func parseRequestFlags(args []string) (*RequestConfig, error) {
-	var secretName string
+	var secretNames []string
 	var flagArgs []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -178,10 +201,8 @@ func parseRequestFlags(args []string) (*RequestConfig, error) {
 				i++
 				flagArgs = append(flagArgs, args[i])
 			}
-		} else if secretName == "" {
-			secretName = arg
 		} else {
-			flagArgs = append(flagArgs, arg)
+			secretNames = append(secretNames, arg)
 		}
 	}
 
@@ -198,10 +219,10 @@ func parseRequestFlags(args []string) (*RequestConfig, error) {
 	if err := fs.Parse(flagArgs); err != nil {
 		return nil, err
 	}
-	if secretName == "" {
-		return nil, fmt.Errorf("usage: vault request <secret-name> [flags]\n\nRun 'vault --help' for available flags.")
+	if len(secretNames) == 0 {
+		return nil, fmt.Errorf("usage: vault request <secret-name>... [flags]\n\nRun 'vault --help' for available flags.")
 	}
-	cfg.SecretName = secretName
+	cfg.SecretNames = secretNames
 	return cfg, nil
 }
 

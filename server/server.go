@@ -5,17 +5,40 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
-
-	"github.com/rubybear-lgtm/vault-request/token"
 )
+
+// makePath derives a URL-safe path from secret names.
+func makePath(names []string) string {
+	var parts []string
+	for _, n := range names {
+		s := strings.ToLower(n)
+		var clean []byte
+		for i := 0; i < len(s); i++ {
+			c := s[i]
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
+				clean = append(clean, c)
+			}
+		}
+		if len(clean) > 0 {
+			parts = append(parts, string(clean))
+		}
+	}
+	joined := strings.Join(parts, "_")
+	if len(joined) > 80 {
+		joined = joined[:80]
+		joined = strings.TrimRight(joined, "_")
+	}
+	return joined
+}
 
 // Server manages the one-time HTTP server lifecycle.
 type Server struct {
-	secretName    string
+	secretNames   []string
 	secretNote    string
-	token         string
+	path          string
 	submitted     bool
 	encryptedBlob []byte
 
@@ -28,30 +51,25 @@ type Server struct {
 
 // Config holds server creation parameters.
 type Config struct {
-	SecretName string
-	Note       string
-	TTL        time.Duration
-	Port       int
-	ListenAddr string
+	SecretNames []string
+	Note        string
+	TTL         time.Duration
+	Port        int
+	ListenAddr  string
 }
 
 // Start creates and starts the HTTP server, returning once it is listening.
 func Start(cfg Config) (*Server, error) {
-	tok, err := token.Generate()
-	if err != nil {
-		return nil, fmt.Errorf("generate token: %w", err)
-	}
-
 	listenAddr := cfg.ListenAddr
 	if listenAddr == "" {
 		listenAddr = "127.0.0.1"
 	}
 
 	s := &Server{
-		secretName: cfg.SecretName,
-		secretNote: cfg.Note,
-		token:      tok,
-		done:       make(chan struct{}),
+		secretNames: cfg.SecretNames,
+		secretNote:  cfg.Note,
+		path:        makePath(cfg.SecretNames),
+		done:        make(chan struct{}),
 	}
 
 	s.http = &http.Server{
@@ -82,11 +100,11 @@ func Start(cfg Config) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) Port() int     { return s.port }
-func (s *Server) Token() string { return s.token }
+func (s *Server) Port() int  { return s.port }
+func (s *Server) Path() string { return s.path }
 
 func (s *Server) URL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d/claim/%s", s.port, s.token)
+	return fmt.Sprintf("http://127.0.0.1:%d/claim/%s", s.port, s.path)
 }
 
 func (s *Server) Done() <-chan struct{} { return s.done }
