@@ -1,6 +1,6 @@
 {
   "name": "@pinchpass/cli",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "One-time E2E-encrypted secret request links for OpenClaw agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,19 +10,24 @@
     "openclaw.plugin.json"
   ],
   "openclaw": {
-    "extensions": [
-      "./dist/index.js"
-    ]
+    "extensions": ["./dist/index.js"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    },
+    "build": {
+      "openclawVersion": "2026.3.24-beta.2",
+      "pluginSdkVersion": "2026.3.24-beta.2"
+    }
   },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.16.2"
+    "openclaw": "^2026.6.1"
   },
   "devDependencies": {
-    "@types/node": "^25.9.2",
     "typescript": "^5.9.0"
   },
   "publishConfig": {

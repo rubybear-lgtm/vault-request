@@ -1,7 +1,12 @@
 {
   "id": "pinchpass",
   "name": "PinchPass",
-  "description": "Generate one-time E2E-encrypted secret request links",
+  "description": "One-time E2E-encrypted secret request links",
+  "cliBackends": ["pinchpass"],
+  "setup": {
+    "cliBackends": ["pinchpass"],
+    "requiresRuntime": false
+  },
   "activation": {
     "onStartup": false
   },
