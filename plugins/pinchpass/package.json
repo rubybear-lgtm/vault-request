@@ -1,5 +1,5 @@
 {
-  "name": "@rubybear-lgtm/pinchpass",
+  "name": "@pinchpass/cli",
   "version": "1.0.0",
   "description": "One-time E2E-encrypted secret request links for OpenClaw agents",
   "type": "module",

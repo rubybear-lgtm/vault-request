@@ -133,7 +133,7 @@ OpenClaw runs in this repo. No config needed.
 ### Install from npm
 
 ```bash
-openclaw plugins install @rubybear-lgtm/pinchpass
+openclaw plugins install @pinchpass/cli
 ```
 
 ### Manual install
