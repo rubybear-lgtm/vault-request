@@ -1,19 +1,21 @@
 {
   "name": "@pinchpass/cli",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "One-time E2E-encrypted secret request links for OpenClaw agents",
   "type": "module",
   "main": "./dist/index.js",
   "files": [
     "dist",
     "SKILL.md",
-    "openclaw.plugin.json"
+    "openclaw.plugin.json",
+    "scripts"
   ],
   "openclaw": {
     "extensions": ["./dist/index.js"]
   },
   "scripts": {
     "build": "tsc",
+    "postinstall": "node scripts/install-binary.js",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
